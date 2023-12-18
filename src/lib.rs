@@ -23,11 +23,43 @@ impl Ray {
             if let Some(p) = plane.intersect(&self) {
                 if let Some((q, _)) = ixn {
                     if na::distance(&p, &self.origin) < na::distance(&q, &self.origin) {
-                        ixn = Some((p, &plane));
+                        ixn = Some((p, plane));
                     }
                 } else {
-                    ixn = Some((p, &plane));
+                    ixn = Some((p, plane));
                 }
+            }
+        }
+
+        let mut ixn_s: Option<(Point3<f64>, &Sphere)> = None;
+        for sphere in &scene.spheres {
+            if let Some(p) = sphere.intersect(&self) {
+                if let Some((q, _)) = ixn_s {
+                    if na::distance(&p, &self.origin) < na::distance(&q, &self.origin) {
+                        ixn_s = Some((p, sphere));
+                    }
+                } else {
+                    ixn_s = Some((p, sphere));
+                }
+            }
+        }
+
+
+        if let Some((pt, sphere)) = ixn_s {
+            let normal = (pt - sphere.origin).normalize();
+            let proj = 2.0 * self.dir.dot(&normal) * normal;
+            let ray = Ray {
+                origin: pt,
+                dir: self.dir - proj,
+            };
+            let scene = Scene {
+                planes: scene.planes.clone(),
+                spheres: vec![]
+            };
+            if max_bounces > 0 {
+                return ray.trace(&scene, max_bounces-1);
+            } else {
+                return None;
             }
         }
 
@@ -50,17 +82,36 @@ impl Ray {
     }
 }
 
+#[derive(Debug)]
 pub struct Sphere {
-    pub p: Point3<f64>,
-    pub r: Point3<f64>,
+    pub origin: Point3<f64>,
+    pub radius: f64,
 }
 impl Sphere {
+    pub fn intersect(&self, ray: &Ray) -> Option<Point3<f64>> {
+        let a = ray.dir.norm_squared();
+        let b = 2.0*(ray.origin - self.origin).dot(&ray.dir);
+        let c = (ray.origin - self.origin).norm_squared() - self.radius*self.radius;
+
+        let discriminant = b*b - 4.0*a*c;
+
+        if discriminant >= 0.0 {
+            let t0 = (-b - f64::sqrt(discriminant))/(2.0*a);
+            let t1 = (-b + f64::sqrt(discriminant))/(2.0*a);
+            let t = f64::min(t0, t1);
+            if t >= 0.0 {
+                Some(ray.origin + t*ray.dir)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
-pub trait RayIntersect {
-}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Plane {
     pub p0: Point3<f64>,
     pub p1: Point3<f64>,
@@ -110,5 +161,6 @@ impl Plane {
 #[derive(Debug)]
 pub struct Scene {
     pub planes: Vec<Plane>,
+    pub spheres: Vec<Sphere>,
 }
 /* pub fn trace(&self, scene: &Scene, maxbounces: usize) ->  */
