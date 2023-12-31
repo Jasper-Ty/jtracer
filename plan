@@ -1,0 +1,4 @@
+object: shape, material
+light: point
+
+scene description: reverse polish

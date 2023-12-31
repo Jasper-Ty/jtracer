@@ -1,49 +1,176 @@
 extern crate nalgebra as na;
 
 pub mod imbuf;
+mod scene;
+pub use scene::Scene;
+
+
+pub struct Viewport {
+    pub target: Point3<f64>,
+    pub eye: Point3<f64>,
+    pub up: Vector3<f64>,
+}
 
 use na::{Point3, Vector3, point};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Ray {
     pub origin: Point3<f64>,
     pub dir: Vector3<f64>,
 }
 
-pub enum Geometry {
-    Plane,
-    Sphere,
-    Triangle,
+#[derive(Debug)]
+pub enum Shape {
+    Plane {
+        p: Point3<f64>,
+        n: Vector3<f64>,
+    },
+    Sphere {
+        p: Point3<f64>,
+        r: f64,
+    },
+    Triangle {
+        p0: Point3<f64>,
+        p1: Point3<f64>,
+        p2: Point3<f64>,
+    },
 }
 
+//TODO: intersect -> cast -> trace functions
+impl Shape {
+    /// Attempts to intersect a ray with the shape, returning the point of
+    /// intersection if one exists
+    pub fn intersect(&self, ray: &Ray) -> Option<Point3<f64>> {
+        match self {
+            Self::Plane { p, n, .. } => {
+                let denom = ray.dir.dot(n);
+                if denom != 0.0 {
+                    let t = -(ray.origin - p).dot(&n)/denom;
+                    (t > 0.0).then(|| ray.origin + t*ray.dir)
+                } else {
+                    None
+                }
+            },
+            Self::Sphere { p, r, .. } => { 
+                let a = ray.dir.norm_squared();
+                let b = 2.0*(ray.origin - p).dot(&ray.dir);
+                let c = (ray.origin - p).norm_squared() - r*r;
+
+                let discriminant = b*b - 4.0*a*c;
+
+                if discriminant >= 0.0 {
+                    let t0 = (-b - f64::sqrt(discriminant))/(2.0*a);
+                    let t1 = (-b + f64::sqrt(discriminant))/(2.0*a);
+                    let t = f64::min(t0, t1);
+                    if t > 0.0 {
+                        Some(ray.origin + t*ray.dir)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            },
+            Self::Triangle { .. } => { todo!() },
+        }
+    }
+
+    /// returns the normal at a point
+    pub fn normal(&self, pt: &Point3<f64>) -> Vector3<f64> {
+        match self {
+            Self::Plane { n, .. } => n.clone(),
+            Self::Sphere { p, .. } => (pt - p).try_normalize(10e-6).unwrap(),
+            Self::Triangle { .. } => { todo!() },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Material {
+    Solid {
+        color: Point3<u8>,
+    },
+    Checkered {
+        color0: Point3<u8>,
+        color1: Point3<u8>,
+        up: Vector3<f64>,
+        scale: f64,
+    },
+    Reflective,
+}
+impl Material {
+    pub fn compute() {
+    }
+}
+impl Default for Material {
+    fn default() -> Self {
+        Self::Solid{ color: point![255, 0, 0] }
+    }
+}
+
+#[derive(Debug)]
+pub struct Object {
+    shape: Shape,
+    material: Material,
+}
+
+
 impl Ray {
-    pub fn trace(&self, scene: &Scene, max_bounces: usize) -> Option<Point3<u8>> {
-        let mut ixn: Option<(Point3<f64>, &Plane)> = None;
-        for plane in &scene.planes {
-            if let Some(p) = plane.intersect(&self) {
-                if let Some((q, _)) = ixn {
-                    if na::distance(&p, &self.origin) < na::distance(&q, &self.origin) {
-                        ixn = Some((p, plane));
-                    }
-                } else {
-                    ixn = Some((p, plane));
-                }
+    /// return the first object hit
+    pub fn cast<'a>(&self, objects: &'a[Object]) -> Option<(Point3<f64>, &'a Object)> {
+        let mut intersection = None;
+        for object in objects.iter() {
+            let Some(p) = object.shape.intersect(&self) else { continue };
+            let dp = na::distance(&p, &self.origin);
+            let dq = intersection.map_or(f64::INFINITY, |(q, _)| na::distance(&q, &self.origin));
+            if dp < dq {
+                intersection = Some((p, object));
             }
         }
+        intersection
+    }
 
-        let mut ixn_s: Option<(Point3<f64>, &Sphere)> = None;
-        for sphere in &scene.spheres {
-            if let Some(p) = sphere.intersect(&self) {
-                if let Some((q, _)) = ixn_s {
-                    if na::distance(&p, &self.origin) < na::distance(&q, &self.origin) {
-                        ixn_s = Some((p, sphere));
-                    }
-                } else {
-                    ixn_s = Some((p, sphere));
-                }
+    pub fn trace(&self, scene: &Scene) -> Option<Point3<u8>> {
+        let (_, object) = self.cast(&scene.objects[..])?;
+        match object.material {
+            Material::Solid { color } => Some(color),
+            _ => None
+        }
+        /*
+        let (p, object) = loop {
+            let (p, object) = ray.cast(&scene.objects[..])?;
+            if let Material::Reflective = object.material {
+                let normal = object.shape.normal(&p);
+                let proj = self.dir.dot(&normal) * normal;
+                ray = Ray {
+                    origin: p,
+                    dir: self.dir - 2.0*proj 
+                };
+            } else {
+                break (p, object);
             }
+        };
+
+        // TODO: cast rays to light sources
+        for _ in &scene.lights {
         }
 
+        match object.material {
+            Material::Solid { color } => Some(color),
+            Material::Checkered { 
+                color0,
+                color1,
+                up,
+                scale,
+            } => { 
+                todo!()
+            },
+            _ => None,
+        }
+        */
+    }
+
+        /*
 
         if let Some((pt, sphere)) = ixn_s {
             let normal = (pt - sphere.origin).normalize();
@@ -79,88 +206,10 @@ impl Ray {
         } else {
             None
         }
-    }
+        */
 }
+
 
 #[derive(Debug)]
-pub struct Sphere {
-    pub origin: Point3<f64>,
-    pub radius: f64,
-}
-impl Sphere {
-    pub fn intersect(&self, ray: &Ray) -> Option<Point3<f64>> {
-        let a = ray.dir.norm_squared();
-        let b = 2.0*(ray.origin - self.origin).dot(&ray.dir);
-        let c = (ray.origin - self.origin).norm_squared() - self.radius*self.radius;
+pub struct Light(Point3<f64>);
 
-        let discriminant = b*b - 4.0*a*c;
-
-        if discriminant >= 0.0 {
-            let t0 = (-b - f64::sqrt(discriminant))/(2.0*a);
-            let t1 = (-b + f64::sqrt(discriminant))/(2.0*a);
-            let t = f64::min(t0, t1);
-            if t >= 0.0 {
-                Some(ray.origin + t*ray.dir)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct Plane {
-    pub p0: Point3<f64>,
-    pub p1: Point3<f64>,
-    pub p2: Point3<f64>,
-    /// p1 - p0
-    u: Vector3<f64>,
-    /// p2 - p0
-    v: Vector3<f64>,
-    /// u X v
-    n: Vector3<f64>,
-}
-impl Plane {
-    pub fn new(p0: Point3<f64>, p1: Point3<f64>, p2: Point3<f64>) -> Self {
-        let u = p1 - p0;
-        let v = p2 - p0;
-        let n = u.cross(&v);
-        Self {
-            p0,
-            p1,
-            p2,
-            u,
-            v,
-            n,
-        }
-    }
-    pub fn proj_coords(&self, pt: &Point3<f64>) -> (f64, f64) {
-        let dp = pt - self.p0;
-        let u = dp.dot(&self.u)/self.u.dot(&self.u);
-        let v = dp.dot(&self.v)/self.v.dot(&self.v);
-        (u, v)
-    }
-    pub fn intersect(&self, ray: &Ray) -> Option<Point3<f64>> {
-        let denom = ray.dir.dot(&self.n);
-        if denom != 0.0 {
-            let t = -(ray.origin - self.p0).dot(&self.n)/denom;
-            if t >= 0.0 {
-                Some(ray.origin + t*ray.dir)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Scene {
-    pub planes: Vec<Plane>,
-    pub spheres: Vec<Sphere>,
-}
-/* pub fn trace(&self, scene: &Scene, maxbounces: usize) ->  */
