@@ -4,6 +4,9 @@ pub mod imbuf;
 mod scene;
 pub use scene::Scene;
 
+pub fn sigmoid(x: f64) -> f64 {
+    1.0/(1.0 + f64::exp(-x))
+}
 
 pub struct Viewport {
     pub target: Point3<f64>,
@@ -17,6 +20,16 @@ use na::{Point3, Vector3, point};
 pub struct Ray {
     pub origin: Point3<f64>,
     pub dir: Vector3<f64>,
+}
+
+/// returns a new iterator that skips the ith element
+pub fn except<U, T>(iter: U, i: usize) -> impl Iterator<Item = T> 
+where
+    U: Iterator<Item = T>
+{
+    iter
+        .enumerate()
+        .filter_map(move |(j, e)| (j != i).then_some(e))
 }
 
 #[derive(Debug)]
@@ -40,13 +53,17 @@ pub enum Shape {
 impl Shape {
     /// Attempts to intersect a ray with the shape, returning the point of
     /// intersection if one exists
-    pub fn intersect(&self, ray: &Ray) -> Option<Point3<f64>> {
+    pub fn intersect(&self, ray: &Ray) -> Option<f64> {
         match self {
             Self::Plane { p, n, .. } => {
                 let denom = ray.dir.dot(n);
                 if denom != 0.0 {
                     let t = -(ray.origin - p).dot(&n)/denom;
-                    (t > 0.0).then(|| ray.origin + t*ray.dir)
+                    if t > 0.0 {
+                        Some(t)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -63,7 +80,7 @@ impl Shape {
                     let t1 = (-b + f64::sqrt(discriminant))/(2.0*a);
                     let t = f64::min(t0, t1);
                     if t > 0.0 {
-                        Some(ray.origin + t*ray.dir)
+                        Some(t)
                     } else {
                         None
                     }
@@ -74,7 +91,6 @@ impl Shape {
             Self::Triangle { .. } => { todo!() },
         }
     }
-
     /// returns the normal at a point
     pub fn normal(&self, pt: &Point3<f64>) -> Vector3<f64> {
         match self {
@@ -116,26 +132,55 @@ pub struct Object {
 
 
 impl Ray {
-    /// return the first object hit
-    pub fn cast<'a>(&self, objects: &'a[Object]) -> Option<(Point3<f64>, &'a Object)> {
-        let mut intersection = None;
-        for object in objects.iter() {
-            let Some(p) = object.shape.intersect(&self) else { continue };
-            let dp = na::distance(&p, &self.origin);
-            let dq = intersection.map_or(f64::INFINITY, |(q, _)| na::distance(&q, &self.origin));
-            if dp < dq {
-                intersection = Some((p, object));
+    pub fn at(&self, t: f64) -> Point3<f64> {
+        self.origin + t*self.dir
+    }
+
+    pub fn cast<'a, T>(
+        &self, 
+        objects: T
+    ) 
+    -> Option<(Point3<f64>, usize)> 
+    where
+        T: Iterator<Item = &'a Object>
+    {
+        let mut min = f64::INFINITY;
+        let mut object_hit = None;
+
+        for (i, object) in objects.enumerate() {
+            let Some(curr) = object.shape.intersect(&self) else { continue };
+            if curr < min {
+                min = curr;
+                object_hit = Some(i);
             }
+            min = f64::min(curr, min);
         }
-        intersection
+
+        object_hit.map(|obj| (self.at(min), obj))
     }
 
     pub fn trace(&self, scene: &Scene) -> Option<Point3<u8>> {
-        let (_, object) = self.cast(&scene.objects[..])?;
-        match object.material {
+        let (p, i) = self.cast(scene.objects.iter())?;
+        let color = match scene.objects[i].material {
             Material::Solid { color } => Some(color),
             _ => None
+        }?;
+        let mut brightness: f64 = 0.0;
+        for light in &scene.lights {
+            if !light.occluded(p, scene.objects.iter()) {
+                brightness += 10.0 / (1.0 + 0.5*na::distance(&light.0, &p));
+            }
         }
+        let v = sigmoid(brightness);
+        let (mut cx, mut cy, mut cz) = (color.x, color.y, color.z);
+        cx = ((cx as f64) * v) as u8;
+        cy = ((cy as f64) * v) as u8;
+        cz = ((cz as f64) * v) as u8;
+        let newcolor = point![cx, cy, cz];
+        // println!("{} * {} = {}", color, v, newcolor);
+        Some(point![cx, cy, cz])
+
+        /* cast to light */
         /*
         let (p, object) = loop {
             let (p, object) = ray.cast(&scene.objects[..])?;
@@ -212,4 +257,23 @@ impl Ray {
 
 #[derive(Debug)]
 pub struct Light(Point3<f64>);
+impl Light {
+
+    pub fn occluded<'a, T>(
+        &self, 
+        p: Point3<f64>, 
+        objects: T 
+    ) -> bool 
+    where
+        T: Iterator<Item = &'a Object>
+    {
+        let ray = Ray {
+            origin: self.0,
+            dir: p - self.0,
+        };
+        objects
+            .filter_map(|obj| obj.shape.intersect(&ray))
+            .any(|t| t >= 0.0 && t < 1.0 - 10e-6)
+    }
+}
 

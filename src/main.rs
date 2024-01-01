@@ -36,11 +36,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let vmin: f64 = -1.0;
     let vmax: f64 = 1.0;
 
-    let image_width = 100;
-    let image_height = 100;
+    let image_width = 500;
+    let image_height = 500;
 
     let target = Point3::new(0.0, 0.0, 1.0);
-    let eye = Point3::new(0.0, -1.0, 1.0);
+    let eye = Point3::new(0.0, -5.0, 1.0);
     let up = Vector3::new(0.0, 0.0, 1.0);
     let viewport = Viewport { target, eye, up };
 
